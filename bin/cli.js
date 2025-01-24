@@ -256,8 +256,18 @@ program
       // Get migration paths and base directory
       const migrationsDir = path.join(process.cwd(), config?.migrations?.path || 'migrations');
       console.log('Looking for migrations in:', migrationsDir);
+      
+      // Get paths from getMigrationPaths
       const paths = await getMigrationPaths(process.cwd(), migrator, config?.migrations?.path, opts.path);
       console.log('Found migration paths:', paths);
+
+      // Get all migration files using migrator's getMigrationFiles
+      const files = await migrator.getMigrationFiles(paths);
+      if (Object.keys(files).length === 0) {
+        console.log(color.yellow('No migration files found.'));
+        return;
+      }
+      console.log('Found migration files:', Object.values(files));
       
       // Create output directory within migrations folder
       const outputDir = path.join(migrationsDir, opts.output);
@@ -265,9 +275,9 @@ program
       await promisify(fs.mkdir)(outputDir, { recursive: true });
 
       // Process each migration file
-      for (const migrationPath of paths) {
+      for (const [name, migrationPath] of Object.entries(files)) {
         try {
-          console.log('\nProcessing migration:', migrationPath);
+          console.log('\nProcessing migration:', name);
           const fullPath = path.resolve(process.cwd(), migrationPath);
           console.log('Loading migration from:', fullPath);
           
@@ -278,7 +288,6 @@ program
 
           const Migration = require(fullPath);
           const instance = new Migration();
-          const name = path.basename(migrationPath, '.js');
           
           // Capture up SQL
           console.log('Generating UP SQL...');
@@ -314,7 +323,7 @@ program
             console.log('No DOWN SQL generated');
           }
         } catch (err) {
-          console.error(color.red(`Error processing ${path.basename(migrationPath)}:`));
+          console.error(color.red(`Error processing ${name}:`));
           console.error(color.red('Full error:'), err);
           console.error(color.red('Stack trace:'), err.stack);
         }

@@ -239,32 +239,14 @@ program
       sutando.addConnection({
         ...config,
         connection: {},
-        pool: { 
-          min: 0,
-          max: 0,
-          acquireTimeoutMillis: 1,
-          createTimeoutMillis: 1,
-          destroyTimeoutMillis: 1,
-          idleTimeoutMillis: 1,
-          reapIntervalMillis: 1,
-          createRetryIntervalMillis: 1,
-        }
+        pool: { min: 0, max: 0 }
       }, 'default');
 
       Object.entries(config.connections || {}).forEach(([name, connection]) => {
           sutando.addConnection({
             ...connection,
             connection: {},
-            pool: { 
-              min: 0,
-              max: 0,
-              acquireTimeoutMillis: 1,
-              createTimeoutMillis: 1,
-              destroyTimeoutMillis: 1,
-              idleTimeoutMillis: 1,
-              reapIntervalMillis: 1,
-              createRetryIntervalMillis: 1,
-            }
+            pool: { min: 0, max: 0 }
           }, name);
       });
 
@@ -273,45 +255,68 @@ program
 
       // Get migration paths and base directory
       const migrationsDir = path.join(process.cwd(), config?.migrations?.path || 'migrations');
+      console.log('Looking for migrations in:', migrationsDir);
       const paths = await getMigrationPaths(process.cwd(), migrator, config?.migrations?.path, opts.path);
+      console.log('Found migration paths:', paths);
       
       // Create output directory within migrations folder
       const outputDir = path.join(migrationsDir, opts.output);
+      console.log('Creating output directory:', outputDir);
       await promisify(fs.mkdir)(outputDir, { recursive: true });
 
       // Process each migration file
       for (const migrationPath of paths) {
         try {
-          const migration = require(migrationPath);
-          const instance = new migration();
+          console.log('\nProcessing migration:', migrationPath);
+          const fullPath = path.resolve(process.cwd(), migrationPath);
+          console.log('Loading migration from:', fullPath);
+          
+          if (!fs.existsSync(fullPath)) {
+            console.error(color.yellow(`Migration file not found: ${fullPath}`));
+            continue;
+          }
+
+          const Migration = require(fullPath);
+          const instance = new Migration();
           const name = path.basename(migrationPath, '.js');
           
           // Capture up SQL
-          const upSchema = sutando.schema();
+          console.log('Generating UP SQL...');
+          const connection = sutando.connection(instance.getConnection() || 'default');
+          const upSchema = connection.schema();
           await instance.up(upSchema);
           const upSql = upSchema.toSQL();
           
           if (upSql.length > 0) {
+            console.log('UP SQL statements:', upSql);
             const upFilePath = path.join(outputDir, `${name}-up.sql`);
             await writeFile(upFilePath, upSql.map(q => q.sql).join(';\n\n') + ';');
             console.log(color.green(`Generated up SQL for ${name}`));
+          } else {
+            console.log('No UP SQL generated');
           }
 
-          // Reset schema
-          sutando.schema().clear();
-
+          // Reset connection for down migration
+          const downConnection = sutando.connection(instance.getConnection() || 'default');
+          
           // Capture down SQL
-          const downSchema = sutando.schema();
+          console.log('Generating DOWN SQL...');
+          const downSchema = downConnection.schema();
           await instance.down(downSchema);
           const downSql = downSchema.toSQL();
           
           if (downSql.length > 0) {
+            console.log('DOWN SQL statements:', downSql);
             const downFilePath = path.join(outputDir, `${name}-down.sql`);
             await writeFile(downFilePath, downSql.map(q => q.sql).join(';\n\n') + ';');
             console.log(color.green(`Generated down SQL for ${name}`));
+          } else {
+            console.log('No DOWN SQL generated');
           }
         } catch (err) {
-          console.error(color.red(`Error processing ${path.basename(migrationPath)}: ${err.message}`));
+          console.error(color.red(`Error processing ${path.basename(migrationPath)}:`));
+          console.error(color.red('Full error:'), err);
+          console.error(color.red('Stack trace:'), err.stack);
         }
       }
 

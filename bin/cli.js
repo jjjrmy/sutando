@@ -230,11 +230,15 @@ program
     const config = require(env.configPath);
     
     try {
-      const Knex = require('knex');
-      const knex = Knex({
-        client: config.client || 'mysql',
-        connection: { },
-        // Use a dummy pool to prevent connection attempts
+      // Setup sutando with minimal pool settings
+      const sutando = getSutandoModule('./sutando');
+      const MigrationRepository = getSutandoModule('./migrations/migration-repository');
+      const Migrator = getSutandoModule('./migrations/migrator');
+      
+      const table = config?.migration?.table || 'migrations';
+      sutando.addConnection({
+        ...config,
+        connection: {},
         pool: { 
           min: 0,
           max: 0,
@@ -245,11 +249,31 @@ program
           reapIntervalMillis: 1,
           createRetryIntervalMillis: 1,
         }
+      }, 'default');
+
+      Object.entries(config.connections || {}).forEach(([name, connection]) => {
+          sutando.addConnection({
+            ...connection,
+            connection: {},
+            pool: { 
+              min: 0,
+              max: 0,
+              acquireTimeoutMillis: 1,
+              createTimeoutMillis: 1,
+              destroyTimeoutMillis: 1,
+              idleTimeoutMillis: 1,
+              reapIntervalMillis: 1,
+              createRetryIntervalMillis: 1,
+            }
+          }, name);
       });
+
+      const repository = new MigrationRepository(sutando, table);
+      const migrator = new Migrator(repository, sutando);
 
       // Get migration paths and base directory
       const migrationsDir = path.join(process.cwd(), config?.migrations?.path || 'migrations');
-      const paths = await getMigrationPaths(process.cwd(), null, config?.migrations?.path, opts.path);
+      const paths = await getMigrationPaths(process.cwd(), migrator, config?.migrations?.path, opts.path);
       
       // Create output directory within migrations folder
       const outputDir = path.join(migrationsDir, opts.output);
@@ -263,8 +287,7 @@ program
           const name = path.basename(migrationPath, '.js');
           
           // Capture up SQL
-          const upQueries = [];
-          const upSchema = knex.schema;
+          const upSchema = sutando.schema();
           await instance.up(upSchema);
           const upSql = upSchema.toSQL();
           
@@ -274,12 +297,11 @@ program
             console.log(color.green(`Generated up SQL for ${name}`));
           }
 
-          // Reset knex schema
-          knex.schema.clear();
+          // Reset schema
+          sutando.schema().clear();
 
           // Capture down SQL
-          const downQueries = [];
-          const downSchema = knex.schema;
+          const downSchema = sutando.schema();
           await instance.down(downSchema);
           const downSql = downSchema.toSQL();
           

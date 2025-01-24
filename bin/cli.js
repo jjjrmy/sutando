@@ -231,9 +231,9 @@ program
     
     try {
       // Setup sutando with minimal pool settings
-      const sutando = getSutandoModule('./sutando');
-      const MigrationRepository = getSutandoModule('./migrations/migration-repository');
-      const Migrator = getSutandoModule('./migrations/migrator');
+      const sutando = getSutandoModule('src/sutando');
+      const MigrationRepository = getSutandoModule('src/migrations/migration-repository');
+      const Migrator = getSutandoModule('src/migrations/migrator');
       
       const table = config?.migration?.table || 'migrations';
       sutando.addConnection({

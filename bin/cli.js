@@ -218,6 +218,88 @@ program
   });
 
 program
+  .command('migrate:export')
+  .description('Export migrations to SQL files.')
+  .option('--path <path>', 'The path to the migrations directory.')
+  .option('--output <path>', 'The path where SQL files will be saved.', '.sql')
+  .action(async (opts) => {
+    if (!env.configPath) {
+      exit('Error: sutando config not found. Run `sutando init` first.');
+    }
+
+    const config = require(env.configPath);
+    
+    try {
+      const Knex = require('knex');
+      const knex = Knex({
+        client: config.client || 'mysql',
+        connection: { },
+        // Use a dummy pool to prevent connection attempts
+        pool: { 
+          min: 0,
+          max: 0,
+          acquireTimeoutMillis: 1,
+          createTimeoutMillis: 1,
+          destroyTimeoutMillis: 1,
+          idleTimeoutMillis: 1,
+          reapIntervalMillis: 1,
+          createRetryIntervalMillis: 1,
+        }
+      });
+
+      // Get migration paths and base directory
+      const migrationsDir = path.join(process.cwd(), config?.migrations?.path || 'migrations');
+      const paths = await getMigrationPaths(process.cwd(), null, config?.migrations?.path, opts.path);
+      
+      // Create output directory within migrations folder
+      const outputDir = path.join(migrationsDir, opts.output);
+      await promisify(fs.mkdir)(outputDir, { recursive: true });
+
+      // Process each migration file
+      for (const migrationPath of paths) {
+        try {
+          const migration = require(migrationPath);
+          const instance = new migration();
+          const name = path.basename(migrationPath, '.js');
+          
+          // Capture up SQL
+          const upQueries = [];
+          const upSchema = knex.schema;
+          await instance.up(upSchema);
+          const upSql = upSchema.toSQL();
+          
+          if (upSql.length > 0) {
+            const upFilePath = path.join(outputDir, `${name}-up.sql`);
+            await writeFile(upFilePath, upSql.map(q => q.sql).join(';\n\n') + ';');
+            console.log(color.green(`Generated up SQL for ${name}`));
+          }
+
+          // Reset knex schema
+          knex.schema.clear();
+
+          // Capture down SQL
+          const downQueries = [];
+          const downSchema = knex.schema;
+          await instance.down(downSchema);
+          const downSql = downSchema.toSQL();
+          
+          if (downSql.length > 0) {
+            const downFilePath = path.join(outputDir, `${name}-down.sql`);
+            await writeFile(downFilePath, downSql.map(q => q.sql).join(';\n\n') + ';');
+            console.log(color.green(`Generated down SQL for ${name}`));
+          }
+        } catch (err) {
+          console.error(color.red(`Error processing ${path.basename(migrationPath)}: ${err.message}`));
+        }
+      }
+
+      success(color.green(`SQL files exported to ${opts.output}/`));
+    } catch (err) {
+      exit(err);
+    }
+  });
+
+program
   .command('model:make <name>')
   .description('Create a new Model file.')
   .option('--force', 'Force creation if model already exists.', false)
